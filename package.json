@@ -1,0 +1,9 @@
+{
+  "name": "@voyageforge/dsh-codegraph-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把本机安装的 CodeGraph CLI 作为 MCP 服务器接入 DSH（路径参数化，可跨机器安装）",
+  "files": ["cordis.patch.yml", "README.md"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

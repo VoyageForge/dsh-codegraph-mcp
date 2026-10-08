@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# CodeGraph → DSH：把本机安装的 CodeGraph CLI 接成 MCP 服务器。
+#
+# 为什么用命令行的绝对路径、而不是直接写 `codegraph`：
+#   npm 全局安装只生成 codegraph.cmd / codegraph.ps1 / 无扩展名的 shim，而 DSH 的
+#   mcp-client 以 shell=false 启动子进程。Node 24 起（CVE-2024-27980 加固）拒绝直接
+#   spawn .cmd（EINVAL），无扩展名 shim 在 Windows 上也不可执行。
+#   因此直接调用 CodeGraph 自带运行时里的 node.exe，再指向它的入口脚本——这与官方
+#   npm-shim.js 在 Windows 上的做法一致。
+#
+# 为什么路径写成 !!js 表达式、而不是字面量：
+#   这条条目要能被别人安装，机器名/用户名各不相同，因此从 %APPDATA% 推导，避免写死
+#   C:\Users\<某人>\...。macOS/Linux 上 APPDATA 不存在，需改成对应路径
+#   （如 `process.env.HOME + '/.npm'` 或 `npm root -g` 的结果）。
+#
+# 为什么不传 --path：
+#   cwd 取 process.cwd()，即 DSH 打开的那个工程目录，服务器会从该目录向上找 .codegraph/。
+#   若宿主从非工程目录启动，服务器不会绑定默认工程，但工具仍然可用——按 CodeGraph 的
+#   官方指引，此时在调用时传 `projectPath` 即可查询任意已索引工程。
+#   实测（codegraph 1.6.2）：
+#     cwd = 已索引工程          → 直接绑定该工程
+#     cwd = 家目录（无索引）    → 不绑定默认工程，返回 projectPath 用法的指引
+#     cwd = 家目录 + --path X   → 绑定 X，但从此固定只认 X，故不采用
+#
+# 升级注意：两条路径都指向 @colbymchenry/codegraph 安装目录，不含版本号，
+#   `codegraph upgrade` 之后无需改动本文件。
+# ---------------------------------------------------------------------------
+- insert:
+    - id: mcp-codegraph
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        # 工具以 mcp__<serverName>__<tool> 暴露，即 mcp__codegraph__codegraph_explore。
+        # 同一个 profile 里只能有一个 serverName: codegraph 的实例，重复会加载失败。
+        serverName: codegraph
+        transport: stdio
+        # CodeGraph 自带运行时里的 node.exe（92MB，随平台包一起安装）
+        command: !!js process.getBuiltinModule('node:path').join(process.env.APPDATA, 'npm/node_modules/@colbymchenry/codegraph/node_modules/@colbymchenry/codegraph-win32-x64/node.exe')
+        args:
+          # --liftoff-only：规避 Node >= 22 上 tree-sitter WASM 的 Zone OOM
+          - '--liftoff-only'
+          # 压掉 node:sqlite 的实验特性告警，避免污染 stdio 输出
+          - '--disable-warning=ExperimentalWarning'
+          # CodeGraph 入口脚本（注意是 lib/dist/bin/codegraph.js，不是包根的 codegraph.js）
+          - !!js process.getBuiltinModule('node:path').join(process.env.APPDATA, 'npm/node_modules/@colbymchenry/codegraph/node_modules/@colbymchenry/codegraph-win32-x64/lib/dist/bin/codegraph.js')
+          - 'serve'
+          - '--mcp'
+        # 跟随 DSH 打开的工程；服务器据此向上搜索 .codegraph/
+        cwd: !!js process.cwd()
+        # 大工程首次查询可能超过默认 60s
+        toolCallTimeoutMs: 120000
+        env: {}
