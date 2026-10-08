@@ -65,6 +65,28 @@ dsh plugin --profile <profile> add git+https://github.com/VoyageForge/dsh-codegr
 | `cwd: process.cwd()`，**不传 `--path`** | 跟随 DSH 打开的工程自动绑定索引；写死 `--path` 会让默认工程永远固定为一个 |
 | 带 `--liftoff-only --disable-warning=ExperimentalWarning` | 前者规避 Node ≥ 22 上 tree-sitter WASM 的 Zone OOM，后者压掉 `node:sqlite` 告警以保持 stdio 干净 |
 
+## 默认工程：`--path` 与 `projectPath` 的取舍（实测）
+
+DSH 的 MCP 客户端**不声明 MCP roots**，而本 bundle 用 `cwd: process.cwd()`，所以服务器拿到的工作目录是 **DSH 宿主的启动目录**，不是某个会话的工作目录。实测（codegraph 1.6.2，宿主从 `F:\Projects\Web\deepseek-harness` 启动）不带 `projectPath` 调用时报：
+
+```
+No CodeGraph project is loaded for this session.
+Searched for a .codegraph/ directory starting from: F:\Projects\Web\deepseek-harness
+  • Pass projectPath to the tool call, e.g. projectPath: "/absolute/path/to/your/project"
+  • Or add --path to the server's MCP config args: ["serve", "--mcp", "--path", "/absolute/path/to/your/project"]
+```
+
+两种应对方式：
+
+| 方式 | 效果 | 代价 |
+|---|---|---|
+| **每次调用传 `projectPath`**（本 bundle 的取向） | 一个服务器可查任意多个已索引工程，条目保持跨机器通用 | 每次调用都要带参数；不带就报上面那条错 |
+| 在 `args` 里**加 `--path <工程>`** | 该工程成为默认工程，调用无需参数 | **只能绑定一个工程**，且把机器专属路径写进了共享仓库，牺牲可移植性 |
+
+配合 [`@voyageforge/dsh-csharp-preset`](https://github.com/VoyageForge/dsh-csharp-preset) 等预设使用时，预设的 persona 规则已经写明这一条——agent 会主动带上 `projectPath`，使用者通常无感。
+
+如果你的布局固定、且几乎只在一个大工程里工作，想换默认绑定，注意**不要**在 profile 补丁层写 `config: { cwd: ... }` 之类的不完整覆盖：DSH 的 loader 对已有条目的 `config` 是**整体替换而非合并**，只写一个字段会清掉 `command` 与 `args`，连接直接失效（实测确认）。要么在本文件的 `args` 里加 `--path`，要么提供完整的 config。
+
 ## 跨平台
 
 本文件目前只覆盖 **Windows**（从 `process.env.APPDATA` 推导路径）。macOS / Linux 上 `APPDATA` 不存在，需要把两条 `!!js` 改成对应位置，例如：
